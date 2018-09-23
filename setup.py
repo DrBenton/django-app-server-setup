@@ -1,4 +1,4 @@
-#!python3.6
+#!/usr/bin/python3.6
 
 from contextlib import contextmanager
 import os
@@ -34,7 +34,7 @@ DJANGO_PROJECT_NAME = "project"
 ##################
 
 
-def setup_server():
+def setup_server() -> None:
     flight_precheck()
 
     ensure_base_software()
@@ -52,7 +52,7 @@ def setup_server():
     ensure_gunicorn_and_nginx_services_setup()
 
 
-def flight_precheck():
+def flight_precheck() -> None:
     USAGE = "Usage: sudo python3.6 setup.py"
     if sys.version_info < (3, 6):
         _report(USAGE, "This script must be run with Python 3.6+", fatal=True)
@@ -77,7 +77,7 @@ def flight_precheck():
 ##################
 
 
-def ensure_base_software():
+def ensure_base_software() -> None:
     with _ensuring_step("Curl"):
         install_debian_package_if_needed("curl")
         _check_cmd_output_or_die(["curl", "--version"], r"^curl \d\.\d+(?:.|\n)+https")
@@ -86,7 +86,7 @@ def ensure_base_software():
         _check_cmd_output_or_die(["git", "--version"], r"^git version 2\.")
 
 
-def ensure_python():
+def ensure_python() -> None:
     with _ensuring_step("Python"):
         install_ppa_if_needed("deadsnakes")
         install_debian_package_if_needed(f"python{TARGET_PYTHON_VERSION}")
@@ -105,7 +105,7 @@ def ensure_python():
         )
 
 
-def ensure_nodejs():
+def ensure_nodejs() -> None:
     with _ensuring_step("Node.js"):
         _report(
             f"Checking if Node.js 'v{TARGET_NODEJS_VERSION}' is already installed...",
@@ -122,7 +122,7 @@ def ensure_nodejs():
         nodejs_install()
 
 
-def ensure_postgres():
+def ensure_postgres() -> None:
     with _ensuring_step("Postgres"):
         install_debian_package_if_needed(f"postgresql-{TARGET_POSTGRES_VERSION}")
         install_debian_package_if_needed(f"postgresql-client-{TARGET_POSTGRES_VERSION}")
@@ -137,7 +137,7 @@ def ensure_postgres():
         )
 
 
-def ensure_nginx():
+def ensure_nginx() -> None:
     with _ensuring_step("Nginx"):
         install_debian_package_if_needed("nginx")
         _check_cmd_output_or_die(
@@ -145,31 +145,31 @@ def ensure_nginx():
         )
 
 
-def ensure_postgres_django_setup():
+def ensure_postgres_django_setup() -> None:
     with _ensuring_step("Posgres config for the Django app"):
         postgres_django_setup_ensure_db(POSTGRES_DB)
         postgres_django_setup_ensure_user(POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB)
 
 
-def ensure_python_app_packages_setup():
+def ensure_python_app_packages_setup() -> None:
     with _ensuring_step("Python packages for our app"):
         install_python_package_if_needed("gunicorn")
         install_python_package_if_needed("psycopg2-binary")
         install_python_package_if_needed("pipenv")
 
 
-def ensure_linux_user_setup():
+def ensure_linux_user_setup() -> None:
     with _ensuring_step("Linux user"):
         if not has_linux_user(LINUX_USER):
             create_linux_user(LINUX_USER, LINUX_GROUP)
 
 
-def ensure_django_app():
+def ensure_django_app() -> None:
     with _ensuring_step("Django app"):
         create_blank_django_app_if_needed(DJANGO_APP_DIR, DJANGO_PROJECT_NAME)
 
 
-def ensure_gunicorn_and_nginx_services_setup():
+def ensure_gunicorn_and_nginx_services_setup() -> None:
     with _ensuring_step("Gunicorn & Nginx services"):
         create_file_if_needed(
             "/etc/systemd/system/gunicorn.socket", _GUNICORN_SOCKET_FILE
@@ -539,7 +539,20 @@ def create_blank_django_app(app_dir: str, app_project_name: str) -> None:
     ]
     _run(create_project_cmd)
 
-    _report(f"Blank Django project created.", step_done=True)
+    chown_cmd = ["chown", "-R", f"{LINUX_USER}:{LINUX_GROUP}", app_dir]
+    _run(chown_cmd)
+
+    _report("Adding the server IP address to Django's ALLOWED_HOSTS...", step_done=True)
+    update_django_allowed_hosts = f"""\
+sed -i -r \
+"s~^ALLOWED_HOSTS = .+$~ALLOWED_HOSTS = ['$(hostname -I | cut -d ' ' -f 1)']~" \
+{app_dir}/{app_project_name}/settings.py    
+"""
+    _run(update_django_allowed_hosts, shell=True)
+    _report("Django ALLOWED_HOSTS updated.", step_done=True)
+
+    _report("Blank Django project created.", step_done=True)
+    _report(r"/!\ Beware! This app is in DEBUG mode at the moment.")
 
 
 ##################
@@ -583,10 +596,13 @@ def _run(
             process_result.stderr.decode("utf-8") if process_result.stderr else None
         )
         result = RunResult(success=success, stdout=stdout, stderr=stderr)
+
+        if die_on_error and not result.success:
+            raise SubProcessError(cmd, result)
+
     except FileNotFoundError as e:
         result = RunResult(success=False, error=e)
-    if die_on_error and not result.success:
-        raise SubProcessError(cmd, process_result)
+
     return result
 
 
@@ -607,11 +623,8 @@ def _check_cmd_output_or_die(cmd: list, pattern: str, shell: bool = False) -> No
 def _check_cmd_output(cmd: list, pattern: str, shell: bool = False) -> bool:
     process_result = _run(cmd, die_on_error=False, shell=shell)
     if not process_result.success:
-        print("process_result.stderr=", process_result.stderr)
         return False
     match: bool = re.match(pattern, process_result.stdout, flags=re.M) != None
-    if not match:
-        print("process_result.stdout=", process_result.stdout)
     return match
 
 
