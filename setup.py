@@ -60,21 +60,17 @@ def setup_server() -> None:
 def flight_precheck() -> None:
     USAGE = "Usage: sudo python3.6 setup.py"
     if sys.version_info < (3, 6):
-        _report(USAGE, "This script must be run with Python 3.6+", fatal=True)
-        sys.exit(1)
+        _panic(USAGE, "This script must be run with Python 3.6+")
 
     if not is_root():
-        _report(USAGE, "This script must be run as 'root'", fatal=True)
-        sys.exit(1)
+        _panic(USAGE, "This script must be run as 'root'")
 
     with _ensuring_step("Linux distribution"):
         distrib_ok = check_distrib()
         if not distrib_ok:
-            _report(
-                f"This script only works for {TARGET_DISTRIBUTION} ; type `cat /etc/lsb-release` to check yours.",
-                fatal=True,
+            _panic(
+                f"This script only works for {TARGET_DISTRIBUTION} ; type `cat /etc/lsb-release` to check yours."
             )
-            sys.exit(1)
 
 
 ##################
@@ -86,14 +82,11 @@ def ensure_firewall() -> None:
     with _ensuring_step("Firewall"):
         # Since it's a Web server managed by SSH we must make sure that we always allow SSH
         # (but we may not be able to check it, if the firewall is not active)
-        firewall_allow("OpenSSH", check=False)
+        firewall_rule_allow("OpenSSH", check=False)
         firewall_enable_if_needed()
 
-        if not firewall_is_enabled():
-            _report("Couldn't enable the firewall", fatal=True)
-            sys.exit(1)
-
-        firewall_allow_if_needed("Nginx Full")
+        if firewall_rule_check_status("OpenSSH") is not FirewallRuleStatus.ALLOW:
+            _panic("OpenSSH firewall rule is not allowed!")
 
 
 def ensure_base_software() -> None:
@@ -168,6 +161,7 @@ def ensure_nginx() -> None:
         _check_cmd_output_or_die(
             "systemctl show nginx | grep ExecStart", r".+/usr/sbin/nginx", shell=True
         )
+        firewall_rule_allow_if_needed("Nginx Full")
 
 
 def ensure_postgres_django_setup() -> None:
@@ -229,8 +223,10 @@ class FirewallRuleStatus(enum.Enum):
 def firewall_is_enabled() -> bool:
     with _step(f"Checking firewall status...") as step:
         cmd = ["ufw", "status"]
-        process_result = _run(cmd)
-        is_active = process_result.stdout_starts_with("Status: active")
+        process_result = _run(cmd, panic_on_error=False)
+        is_active = process_result.success and process_result.stdout_starts_with(
+            "Status: active"
+        )
         step.done(f"Checked ({'active' if is_active else 'inactive'}).")
         return is_active
 
@@ -240,8 +236,7 @@ def firewall_enable() -> None:
         cmd = ["ufw", "--force", "enable"]
         _run(cmd)
         if not firewall_is_enabled():
-            _report("Couldn't enable the firewall", fatal=True)
-            sys.exit(1)
+            _panic("Couldn't enable the firewall")
         step.done("Firewall enabled.")
 
 
@@ -253,38 +248,38 @@ def firewall_enable_if_needed() -> bool:
     return True
 
 
-def firewall_check_rule_status(rule: str) -> FirewallRuleStatus:
+def firewall_rule_check_status(rule: str) -> FirewallRuleStatus:
     with _step(f"Checking firewall rule '{rule}' status...") as step:
         cmd = f"ufw status | grep '^{rule}'"
-        process_result = _run(cmd, shell=True)
+        process_result = _run(cmd, shell=True, panic_on_error=False)
         status = FirewallRuleStatus.UNKNOWN
-        if process_result.stdout_matches(
-            f"^{rule}\\s+{FirewallRuleStatus.ALLOW.value}"
-        ):
-            status = FirewallRuleStatus.ALLOW
-        elif process_result.stdout_matches(
-            f"^{rule}\\s+{FirewallRuleStatus.DENY.value}"
-        ):
-            status = FirewallRuleStatus.DENY
+        if process_result.success:
+            if process_result.stdout_matches(
+                f"^{rule}\\s+{FirewallRuleStatus.ALLOW.value}"
+            ):
+                status = FirewallRuleStatus.ALLOW
+            elif process_result.stdout_matches(
+                f"^{rule}\\s+{FirewallRuleStatus.DENY.value}"
+            ):
+                status = FirewallRuleStatus.DENY
         step.done(f"Firewall rule checked ({status.value}).")
         return status
 
 
-def firewall_allow(rule: str, check: bool = True) -> None:
+def firewall_rule_allow(rule: str, check: bool = True) -> None:
     with _step(f"Allowing firewall rule '{rule}'...") as step:
         cmd = ["ufw", "allow", rule]
         _run(cmd)
-        if check and firewall_check_rule_status(rule) is not FirewallRuleStatus.ALLOW:
-            _report("Couldn't allow the firewall rule!", fatal=True)
-            sys.exit(1)
+        if check and firewall_rule_check_status(rule) is not FirewallRuleStatus.ALLOW:
+            _panic("Couldn't allow the firewall rule!")
         step.done("Firewall rule allowed.")
 
 
-def firewall_allow_if_needed(rule: str) -> bool:
-    firewall_rule_status = firewall_check_rule_status(rule)
+def firewall_rule_allow_if_needed(rule: str) -> bool:
+    firewall_rule_status = firewall_rule_check_status(rule)
     if firewall_rule_status is FirewallRuleStatus.ALLOW:
         return False
-    firewall_allow(rule)
+    firewall_rule_allow(rule)
     return True
 
 
@@ -370,7 +365,7 @@ def apt_install(name: str) -> None:
 def is_python_package_installed(name: str) -> bool:
     with _step(f"Checking Python package '{name}'...") as step:
         cmd = f"pip list | grep '{name} '"
-        process_result = _run(cmd, die_on_error=False, shell=True)
+        process_result = _run(cmd, panic_on_error=False, shell=True)
         installed = process_result.success and process_result.stdout_starts_with(name)
         if installed:
             step.nothing_to_do("Python package already installed.")
@@ -397,7 +392,7 @@ def install_python_package(name: str) -> None:
 def has_linux_user(user: str) -> bool:
     with _step(f"Checking user '{user}' status...") as step:
         cmd = f"grep '^{user}:' /etc/passwd"
-        process_result = _run(cmd, shell=True, die_on_error=False)
+        process_result = _run(cmd, shell=True, panic_on_error=False)
         user_exists = process_result.success and process_result.stdout_starts_with(user)
         if user_exists:
             step.nothing_to_do("User checked (already exists).")
@@ -445,14 +440,16 @@ def create_file(path: str, content: str) -> None:
 def nginx_enable_site(
     available_sites_path: str, enabled_sites_path: str, site_name: str
 ) -> bool:
+    site_available_path = f"{available_sites_path}/{site_name}"
+    site_enabled_path = f"{enabled_sites_path}/{site_name}"
     if (
-        Path(enabled_sites_path).resolve() == available_sites_path
-        and Path(available_sites_path).is_file()
+        Path(site_enabled_path).resolve() == site_available_path
+        and Path(site_available_path).is_file()
     ):
         return False
 
     with _step(f"Enabling Nginx site '{site_name}'...") as step:
-        cmd = ["ln", "-s", "-f", available_sites_path, enabled_sites_path]
+        cmd = ["ln", "-s", "-f", site_available_path, site_enabled_path]
         _run(cmd)
         step.done("Nginx site enabled.")
         return True
@@ -473,7 +470,7 @@ def nginx_disable_site_if_needed(site_name: str) -> bool:
 def nginx_check_config() -> bool:
     with _step("Checking Nginx config...") as step:
         check_cmd = ["nginx", "-t"]
-        process_result = _run(check_cmd, die_on_error=False)
+        process_result = _run(check_cmd, panic_on_error=False)
         config_ok = process_result.success
         step.done(f"Nginx config checked ({'ok' if config_ok else 'broken'}).")
         return config_ok
@@ -482,8 +479,7 @@ def nginx_check_config() -> bool:
 def nginx_check_config_or_die() -> None:
     config_ok = nginx_check_config()
     if not config_ok:
-        _report("Nginx config is broken!. Type `nginx -t` to investigate.", fatal=True)
-        sys.exit(1)
+        _panic("Nginx config is broken!. Type `nginx -t` to investigate.")
 
 
 def systemd_enable_and_start_service(service_name: str) -> None:
@@ -514,7 +510,7 @@ def systemd_check_service_is_active(service_name: str) -> bool:
         f"Checking if Systemd service '{service_name}' is well and truly active..."
     ) as step:
         cmd = ["systemctl", "status", service_name]
-        process_result = _run(cmd, die_on_error=False)
+        process_result = _run(cmd, panic_on_error=False)
         is_active = process_result.success and process_result.stdout_has_content(
             "active (running)"
         )
@@ -525,8 +521,7 @@ def systemd_check_service_is_active(service_name: str) -> bool:
 def systemd_check_service_is_active_or_die(service_name: str) -> None:
     is_active = systemd_check_service_is_active(service_name)
     if not is_active:
-        _report(f"Service '{service_name}' is not active.", fatal=True)
-        sys.exit(1)
+        _panic(f"Service '{service_name}' is not active.")
 
 
 def db_database_exists(db_name: str) -> bool:
@@ -591,8 +586,7 @@ def postgres_django_setup_ensure_db(db_name: str) -> bool:
 
         postgres_django_setup_create_db(db_name=db_name)
         if not db_exists():
-            _report("Could not create database", fatal=True)
-            sys.exit(1)
+            _panic("Could not create database")
         step.done("Database created.")
         return True
 
@@ -606,8 +600,7 @@ def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) ->
 
         postgres_django_setup_create_user(user=user, password=password, db_name=db_name)
         if not user_exists():
-            _report("Could not create user", fatal=True)
-            sys.exit(1)
+            _panic("Could not create user")
         step.done("User ok.")
         return True
 
@@ -626,11 +619,9 @@ def postgres_django_setup_create_user(user: str, password: str, db_name: str) ->
         password = secrets.token_urlsafe(16)
 
     if len(password) < POSTGRES_PASSWORD_MIN_LENGTH:
-        _report(
-            f"Postgres user password is too short (minimum length: {POSTGRES_PASSWORD_MIN_LENGTH})",
-            fatal=True,
+        _panic(
+            f"Postgres user password is too short (minimum length: {POSTGRES_PASSWORD_MIN_LENGTH})"
         )
-        sys.exit(1)
 
     with _step(
         f"Creating user '{user}' with password '{password}' with all privileges on database '{db_name}'..."
@@ -754,7 +745,7 @@ class SubProcessError(RuntimeError):
 
 
 def _run(
-    cmd: Cmd, die_on_error: bool = True, capture_output=True, **kwargs
+    cmd: Cmd, panic_on_error: bool = True, capture_output=True, **kwargs
 ) -> RunResult:
     # pylint: disable=E1120
     # (@link https://github.com/PyCQA/pylint/issues/1898)
@@ -777,7 +768,7 @@ def _run(
         )
         result = RunResult(success=success, stdout=stdout, stderr=stderr)
 
-        if die_on_error and not result.success:
+        if panic_on_error and not result.success:
             raise SubProcessError(cmd, result)
 
     except FileNotFoundError as e:
@@ -795,12 +786,11 @@ def _run_sql(sql: str) -> t.Optional[str]:
 def _check_cmd_output_or_die(cmd: Cmd, pattern: str, shell: bool = False) -> None:
     output_ok = _check_cmd_output(cmd, pattern, shell=shell)
     if not output_ok:
-        _report(f"Command '{cmd}' output does not match '{pattern}'", fatal=True)
-        sys.exit(1)
+        _panic(f"Command '{cmd}' output does not match '{pattern}'")
 
 
 def _check_cmd_output(cmd: Cmd, pattern: str, shell: bool = False) -> bool:
-    process_result = _run(cmd, die_on_error=False, shell=shell)
+    process_result = _run(cmd, panic_on_error=False, shell=shell)
     if not process_result.success:
         return False
     return process_result.stdout_matches(pattern)
@@ -831,6 +821,11 @@ def _report(
 
     if step_start and not fatal:
         _report._report_nb_levels += 1  # type: ignore
+
+
+def _panic(*args) -> None:
+    _report(*args, fatal=True)
+    sys.exit(1)
 
 
 # pylint: disable=protected-access
