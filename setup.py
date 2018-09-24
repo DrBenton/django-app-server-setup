@@ -1,6 +1,9 @@
 #!/usr/bin/python3.6
 
+# pylint: disable=missing-docstring,invalid-name,line-too-long,bad-continuation
+
 from contextlib import contextmanager
+from functools import partial
 import os
 from pathlib import Path
 import re
@@ -355,17 +358,17 @@ def create_file(path: str, content: str) -> None:
         step.done(f"File created.")
 
 
-def nginx_enable_site(site_name: str) -> bool:
-    nginx_site_source_path = f"{_NGINX_AVAILABLE_SITES_PATH}/{site_name}"
-    nginx_site_target_path = f"{_NGINX_ENABLED_SITES_PATH}/{site_name}"
+def nginx_enable_site(
+    available_sites_path: str, enabled_sites_path: str, site_name: str
+) -> bool:
     if (
-        Path(nginx_site_target_path).resolve() == nginx_site_source_path
-        and Path(nginx_site_source_path).is_file()
+        Path(enabled_sites_path).resolve() == available_sites_path
+        and Path(available_sites_path).is_file()
     ):
         return False
 
     with _step(f"Enabling Nginx site '{site_name}'...") as step:
-        cmd = ["ln", "-s", "-f", nginx_site_source_path, nginx_site_target_path]
+        cmd = ["ln", "-s", "-f", available_sites_path, enabled_sites_path]
         _run(cmd)
         step.done("Nginx site enabled.")
         return True
@@ -442,6 +445,18 @@ def systemd_check_service_is_active_or_die(service_name: str) -> None:
         sys.exit(1)
 
 
+def db_database_exists(db_name: str) -> bool:
+    check_db_sql = f"""select datname from pg_database where datname = '{db_name}';"""
+    result = _run_sql(check_db_sql)
+    return result is not None and result.find(db_name) > -1
+
+
+def db_user_exists(user: str) -> bool:
+    check_user_sql = f"""\\du {user};"""
+    result = _run_sql(check_user_sql)
+    return result is not None and result.find(user) > -1
+
+
 ##################
 # Step-specific functions
 ##################
@@ -484,45 +499,33 @@ apt install --no-install-recommends yarn
 
 
 def postgres_django_setup_ensure_db(db_name: str) -> bool:
-    def db_exists() -> bool:
-        check_db_sql = (
-            f"""select datname from pg_database where datname = '{db_name}';"""
-        )
-        result = _run_sql(check_db_sql)
-        return result is str and result.find(db_name) > -1  # type: ignore
-
+    db_exists = partial(db_database_exists, db_name)
     with _step(f"Checking database '{db_name}' status...") as step:
         if db_exists():
             step.nothing_to_do("Database exists.")
             return False
-        else:
-            postgres_django_setup_create_db(db_name=db_name)
-            if not db_exists():
-                _report("Could not create database", fatal=True)
-                sys.exit(1)
-            step.done("Database created.")
-            return True
+
+        postgres_django_setup_create_db(db_name=db_name)
+        if not db_exists():
+            _report("Could not create database", fatal=True)
+            sys.exit(1)
+        step.done("Database created.")
+        return True
 
 
 def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) -> bool:
-    def user_exists() -> bool:
-        check_user_sql = f"""\\du {user};"""
-        result = _run_sql(check_user_sql)
-        return result is str and result.find(user) > -1  # type: ignore
-
+    user_exists = partial(db_user_exists, user)
     with _step(f"Checking database user '{user}' status...") as step:
         if user_exists():
             step.nothing_to_do("Database user exists.")
             return False
-        else:
-            postgres_django_setup_create_user(
-                user=user, password=password, db_name=db_name
-            )
-            if not user_exists():
-                _report("Could not create user", fatal=True)
-                sys.exit(1)
-            step.done("User ok.")
-            return True
+
+        postgres_django_setup_create_user(user=user, password=password, db_name=db_name)
+        if not user_exists():
+            _report("Could not create user", fatal=True)
+            sys.exit(1)
+        step.done("User ok.")
+        return True
 
 
 def postgres_django_setup_create_db(db_name: str) -> None:
@@ -572,7 +575,7 @@ def gunicorn_and_nginx_services_activate_nginx_site_if_needed(
         if nginx_site_target_ok:
             step.nothing_to_do("Nginx site already enabled.")
         else:
-            nginx_enable_site(site_name)
+            nginx_enable_site(available_sites_path, enabled_sites_path, site_name)
             nginx_check_config_or_die()
             step.done("Nginx site enabled.")
 
@@ -653,16 +656,17 @@ class RunResult(t.NamedTuple):
         )
 
 
+Cmd = t.Union[list, str]
+
+
 class SubProcessError(RuntimeError):
     def __init__(self, cmd: Cmd, process_result: RunResult) -> None:
+        super().__init__()
         self.cmd = cmd
         self.process_result = process_result
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.cmd!r}, '${self.process_result!r}')"
-
-
-Cmd = t.Union[list, str]
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}({self.cmd}, '${self.process_result}')"
 
 
 def _run(
@@ -672,9 +676,9 @@ def _run(
     # (@link https://github.com/PyCQA/pylint/issues/1898)
 
     # No "capture_output" param in Python < 3.7, so we have to deal with "stdout" & "stderr" manually :-/
-    if capture_output == True and kwargs.get("stdout") is None:
+    if capture_output is True and kwargs.get("stdout") is None:
         kwargs["stdout"] = subprocess.PIPE
-    if capture_output == True and kwargs.get("stderr") is None:
+    if capture_output is True and kwargs.get("stderr") is None:
         kwargs["stderr"] = subprocess.PIPE
 
     try:
@@ -724,7 +728,8 @@ def _report(
     step_wip: bool = False,
     step_done: bool = False,
     fatal: bool = False,
-):
+) -> None:
+    # pylint: disable=protected-access
     if fatal:
         prefix = " 💀 "
     else:
@@ -744,7 +749,9 @@ def _report(
         _report._report_nb_levels += 1  # type: ignore
 
 
+# pylint: disable=protected-access
 _report._report_nb_levels = 0  # type: ignore
+# pylint: enable=protected-access
 
 
 @contextmanager
@@ -755,13 +762,16 @@ def _ensuring_step(step_name: str) -> t.Generator[None, None, None]:
 
 
 class StepReporter:
-    def wip(self, caption: str) -> None:
+    @staticmethod
+    def wip(caption: str) -> None:
         _report(caption, step_wip=True)
 
-    def nothing_to_do(self, caption: str) -> None:
+    @staticmethod
+    def nothing_to_do(caption: str) -> None:
         _report(f"{caption} ✓", step_done=True)
 
-    def done(self, caption: str) -> None:
+    @staticmethod
+    def done(caption: str) -> None:
         _report(caption, step_done=True)
 
 

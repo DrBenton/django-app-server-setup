@@ -54,6 +54,14 @@ Here are a few environment variables you can set prior to running this script, i
 
 That's all! :-)
 
+## Code quality
+
+The code itself is formatted with Black and checked with PyLint and MyPy.
+
+```bash
+$ make --no-print-directory check-code-quality
+```
+
 ## Disclaimer
 
 This is a quick-n-dirty provisioning script; it works for me, but use it at your own risk!
