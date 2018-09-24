@@ -38,6 +38,15 @@ root@droplet:~ python3.6 django_setup.py
 # Visit "http://[DROPLET IP]", and you should see the Django "Welcome" page! :-)
 ```
 
+## Customising the setup
+
+Here are a few environment variables you can set prior to running this script, if you want to customise some things:
+
+- `POSTGRES_DB` _(default: "django_app")_
+- `POSTGRES_USER` _(default: "django_app")_
+- `POSTGRES_PASSWORD` _(default: a new one will be generated, and displayed once during the setup)_
+- `NGINX_SERVER_NAME` _(default: no `server_name` directive in the Nginx site config)_
+
 ## Requirements
 
 - Ubuntu 18.04
