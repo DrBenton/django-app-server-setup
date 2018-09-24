@@ -13,6 +13,7 @@ It installs the following:
 
 It also sets up the following:
 
+- a firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) which only allows OpenSSH and Nginx ports
 - a Systemd service for Gunicorn, and configures Nginx to be a proxy to Gunicorn.
 - a "django" Linux user, belonging to the "www-data" group
 - a "django" Postgres user, dedicated to our app

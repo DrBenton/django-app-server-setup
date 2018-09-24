@@ -3,6 +3,7 @@
 # pylint: disable=missing-docstring,invalid-name,line-too-long,bad-continuation
 
 from contextlib import contextmanager
+import enum
 from functools import partial
 import os
 from pathlib import Path
@@ -40,6 +41,7 @@ DJANGO_PROJECT_NAME = "project"
 def setup_server() -> None:
     flight_precheck()
 
+    ensure_firewall()
     ensure_base_software()
     ensure_python()
     ensure_nodejs()
@@ -76,8 +78,22 @@ def flight_precheck() -> None:
 
 
 ##################
-# "Ensure *" functions
+# "Ensure" functions (our top-level tasks)
 ##################
+
+
+def ensure_firewall() -> None:
+    with _ensuring_step("Firewall"):
+        # Since it's a Web server managed by SSH we must make sure that we always allow SSH
+        # (but we may not be able to check it, if the firewall is not active)
+        firewall_allow("OpenSSH", check=False)
+        firewall_enable_if_needed()
+
+        if not firewall_is_enabled():
+            _report("Couldn't enable the firewall", fatal=True)
+            sys.exit(1)
+
+        firewall_allow_if_needed("Nginx Full")
 
 
 def ensure_base_software() -> None:
@@ -202,6 +218,74 @@ def ensure_gunicorn_and_nginx_services_setup() -> None:
 ##################
 # Misc general tasks
 ##################
+
+
+class FirewallRuleStatus(enum.Enum):
+    ALLOW = "ALLOW"
+    DENY = "DENY"
+    UNKNOWN = "UNKNOWN"
+
+
+def firewall_is_enabled() -> bool:
+    with _step(f"Checking firewall status...") as step:
+        cmd = ["ufw", "status"]
+        process_result = _run(cmd)
+        is_active = process_result.stdout_starts_with("Status: active")
+        step.done(f"Checked ({'active' if is_active else 'inactive'}).")
+        return is_active
+
+
+def firewall_enable() -> None:
+    with _step(f"Enabling firewall...") as step:
+        cmd = ["ufw", "--force", "enable"]
+        _run(cmd)
+        if not firewall_is_enabled():
+            _report("Couldn't enable the firewall", fatal=True)
+            sys.exit(1)
+        step.done("Firewall enabled.")
+
+
+def firewall_enable_if_needed() -> bool:
+    is_enabled = firewall_is_enabled()
+    if is_enabled:
+        return False
+    firewall_enable()
+    return True
+
+
+def firewall_check_rule_status(rule: str) -> FirewallRuleStatus:
+    with _step(f"Checking firewall rule '{rule}' status...") as step:
+        cmd = f"ufw status | grep '^{rule}'"
+        process_result = _run(cmd, shell=True)
+        status = FirewallRuleStatus.UNKNOWN
+        if process_result.stdout_matches(
+            f"^{rule}\\s+{FirewallRuleStatus.ALLOW.value}"
+        ):
+            status = FirewallRuleStatus.ALLOW
+        elif process_result.stdout_matches(
+            f"^{rule}\\s+{FirewallRuleStatus.DENY.value}"
+        ):
+            status = FirewallRuleStatus.DENY
+        step.done(f"Firewall rule checked ({status.value}).")
+        return status
+
+
+def firewall_allow(rule: str, check: bool = True) -> None:
+    with _step(f"Allowing firewall rule '{rule}'...") as step:
+        cmd = ["ufw", "allow", rule]
+        _run(cmd)
+        if check and firewall_check_rule_status(rule) is not FirewallRuleStatus.ALLOW:
+            _report("Couldn't allow the firewall rule!", fatal=True)
+            sys.exit(1)
+        step.done("Firewall rule allowed.")
+
+
+def firewall_allow_if_needed(rule: str) -> bool:
+    firewall_rule_status = firewall_check_rule_status(rule)
+    if firewall_rule_status is FirewallRuleStatus.ALLOW:
+        return False
+    firewall_allow(rule)
+    return True
 
 
 def is_debian_package_installed(name: str) -> bool:
@@ -756,7 +840,7 @@ _report._report_nb_levels = 0  # type: ignore
 
 @contextmanager
 def _ensuring_step(step_name: str) -> t.Generator[None, None, None]:
-    _report(f"Ensuring {step_name} is properly installed...", step_start=True)
+    _report(f"Ensuring {step_name} setup...", step_start=True)
     yield
     _report(f"{step_name} setup ok.\n", step_done=True)
 
