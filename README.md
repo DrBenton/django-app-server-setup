@@ -13,10 +13,12 @@ It installs the following:
 
 It also sets up the following:
 
-- a firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) which only allows OpenSSH and Nginx ports
+- firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) rules which only allow OpenSSH and Nginx ports
 - a Systemd service for Gunicorn, and configures Nginx to be a proxy to Gunicorn.
 - a "django" Linux user, belonging to the "www-data" group
 - a "django" Postgres user, dedicated to our app
+
+![screenshot](/.README/screenshot.png)
 
 If no Django app is found in the "_/home/django/django-app/current_" folder, a blank one is created there: all you have to do is to `git clone` your own app somewhere on the server, and symlink it to that folder when it's ready.
 
