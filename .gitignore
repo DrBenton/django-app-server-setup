@@ -1,4 +1,7 @@
 /.vagrant/.vagrant
 /.vagrant/*.log
+
+/.mypy_cache
+
 /.vscode
 

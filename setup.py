@@ -107,22 +107,24 @@ def ensure_python() -> None:
 
 def ensure_nodejs() -> None:
     with _ensuring_step("Node.js"):
-        with _step(f"Checking Node.js 'v{TARGET_NODEJS_VERSION}' status...") as step:
+        with _step(
+            f"Checking Node.js 'v{TARGET_NODEJS_VERSION}' status..."
+        ) as nodejs_step:
             installed = _check_cmd_output(
                 ["node", "--version"], r"^v" + re.escape(TARGET_NODEJS_VERSION)
             )
             if installed:
-                step.nothing_to_do("Node.js target version already installed.")
+                nodejs_step.nothing_to_do("Node.js target version already installed.")
             else:
-                step.done("Node.js target version not installed.")
+                nodejs_step.done("Node.js target version not installed.")
                 nodejs_install()
 
-        with _step("Checking Yarn status...") as step:
+        with _step("Checking Yarn status...") as yarn_step:
             installed = _check_cmd_output(["yarn", "--version"], r"^\d\.\d")
             if installed:
-                step.nothing_to_do("Yarn already installed.")
+                yarn_step.nothing_to_do("Yarn already installed.")
             else:
-                step.done("Yarn not installed.")
+                yarn_step.done("Yarn not installed.")
                 nodejs_install_yarn()
 
 
@@ -190,8 +192,8 @@ def ensure_gunicorn_and_nginx_services_setup() -> None:
             site_name=_NGINX_SITE_NAME,
             site_config=_NGINX_SITE_FILE,
         )
-        _enable_and_start_service("gunicorn")
-        _enable_and_start_service("nginx")
+        systemd_enable_and_start_service("gunicorn")
+        systemd_enable_and_start_service("nginx")
 
 
 ##################
@@ -206,7 +208,9 @@ def is_debian_package_installed(name: str) -> bool:
         cmd = ["dpkg", "-s", name]
         try:
             process_result = _run(cmd)
-            installed = process_result.stdout.find("Status: install ok installed") > -1
+            installed = process_result.stdout_has_content(
+                "Status: install ok installed"
+            )
         except SubProcessError:
             installed = False
         if installed:
@@ -243,7 +247,7 @@ def is_root() -> bool:
 def check_distrib() -> bool:
     cmd = "cat /etc/lsb-release | grep DESCRIPTION"
     process_result = _run(cmd, shell=True)
-    return process_result.stdout.find(TARGET_DISTRIBUTION) > -1
+    return process_result.stdout_has_content(TARGET_DISTRIBUTION)
 
 
 def install_ppa_if_needed(name: str) -> bool:
@@ -280,7 +284,7 @@ def is_python_package_installed(name: str) -> bool:
     with _step(f"Checking Python package '{name}'...") as step:
         cmd = f"pip list | grep '{name} '"
         process_result = _run(cmd, die_on_error=False, shell=True)
-        installed = process_result.success and process_result.stdout.startswith(name)
+        installed = process_result.success and process_result.stdout_starts_with(name)
         if installed:
             step.nothing_to_do("Python package already installed.")
         else:
@@ -307,7 +311,7 @@ def has_linux_user(user: str) -> bool:
     with _step(f"Checking user '{user}' status...") as step:
         cmd = f"grep '^{user}:' /etc/passwd"
         process_result = _run(cmd, shell=True, die_on_error=False)
-        user_exists = process_result.success and process_result.stdout.startswith(user)
+        user_exists = process_result.success and process_result.stdout_starts_with(user)
         if user_exists:
             step.nothing_to_do("User checked (already exists).")
         else:
@@ -395,6 +399,49 @@ def nginx_check_config_or_die() -> None:
         sys.exit(1)
 
 
+def systemd_enable_and_start_service(service_name: str) -> None:
+    with _step(f"Enabling and starting Systemd service '{service_name}'...") as step:
+
+        with _step("Reloading Systemd...") as reloading_systemd_step:
+            systemd_reload_cmd = ["systemctl", "daemon-reload"]
+            _run(systemd_reload_cmd)
+            reloading_systemd_step.done("Systemd reloaded.")
+
+        with _step("Restarting Systemd service...") as restarting_service_step:
+            cmd = ["systemctl", "restart", service_name]
+            _run(cmd)
+            restarting_service_step.done("Service restarted.")
+
+        with _step("Enabling Systemd service...") as enabling_service_step:
+            cmd = ["systemctl", "enable", service_name]
+            _run(cmd)
+            enabling_service_step.done("Service enabled.")
+
+        systemd_check_service_is_active_or_die(service_name)
+
+        step.done(f"Systemd service '{service_name}' enabled and started.")
+
+
+def systemd_check_service_is_active(service_name: str) -> bool:
+    with _step(
+        f"Checking if Systemd service '{service_name}' is well and truly active..."
+    ) as step:
+        cmd = ["systemctl", "status", service_name]
+        process_result = _run(cmd, die_on_error=False)
+        is_active = process_result.success and process_result.stdout_has_content(
+            "active (running)"
+        )
+        step.done(f"Checking done ({'active' if is_active else 'not active'}).")
+        return is_active
+
+
+def systemd_check_service_is_active_or_die(service_name: str) -> None:
+    is_active = systemd_check_service_is_active(service_name)
+    if not is_active:
+        _report(f"Service '{service_name}' is not active.", fatal=True)
+        sys.exit(1)
+
+
 ##################
 # Step-specific functions
 ##################
@@ -442,7 +489,7 @@ def postgres_django_setup_ensure_db(db_name: str) -> bool:
             f"""select datname from pg_database where datname = '{db_name}';"""
         )
         result = _run_sql(check_db_sql)
-        return result.find(db_name) > -1
+        return result is str and result.find(db_name) > -1  # type: ignore
 
     with _step(f"Checking database '{db_name}' status...") as step:
         if db_exists():
@@ -457,11 +504,11 @@ def postgres_django_setup_ensure_db(db_name: str) -> bool:
             return True
 
 
-def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) -> None:
+def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) -> bool:
     def user_exists() -> bool:
         check_user_sql = f"""\\du {user};"""
         result = _run_sql(check_user_sql)
-        return result.find(user) > -1
+        return result is str and result.find(user) > -1  # type: ignore
 
     with _step(f"Checking database user '{user}' status...") as step:
         if user_exists():
@@ -475,6 +522,7 @@ def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) ->
                 _report("Could not create user", fatal=True)
                 sys.exit(1)
             step.done("User ok.")
+            return True
 
 
 def postgres_django_setup_create_db(db_name: str) -> None:
@@ -536,10 +584,11 @@ def create_blank_django_app_if_needed(app_dir: str, app_project_name: str) -> bo
         django_settings_file_path = f"{app_dir}/{app_project_name}/wsgi.py"
         if Path(app_dir).is_dir() and Path(django_settings_file_path).is_file():
             step.nothing_to_do("Django app found.")
-            return
+            return False
         step.wip("Django app not found! Let's create a blank one for the moment.")
         create_blank_django_app(app_dir, app_project_name)
         step.done("Blank Django app created.")
+        return True
 
 
 def create_blank_django_app(app_dir: str, app_project_name: str) -> None:
@@ -588,9 +637,24 @@ class RunResult(t.NamedTuple):
     stderr: t.Optional[str] = None
     error: t.Optional[BaseException] = None
 
+    def has_non_blank_stdout(self) -> bool:
+        return self.stdout is not None and len(self.stdout) > 0
+
+    def stdout_has_content(self, search: str) -> bool:
+        return self.stdout is not None and self.stdout.find(search) > -1
+
+    def stdout_starts_with(self, search: str) -> bool:
+        return self.stdout is not None and self.stdout.startswith(search)
+
+    def stdout_matches(self, pattern: str) -> bool:
+        return (
+            self.stdout is not None
+            and re.match(pattern, self.stdout, flags=re.M) is not None
+        )
+
 
 class SubProcessError(RuntimeError):
-    def __init__(self, cmd: list, process_result: RunResult):
+    def __init__(self, cmd: Cmd, process_result: RunResult) -> None:
         self.cmd = cmd
         self.process_result = process_result
 
@@ -598,8 +662,11 @@ class SubProcessError(RuntimeError):
         return f"{self.__class__.__name__}({self.cmd!r}, '${self.process_result!r}')"
 
 
+Cmd = t.Union[list, str]
+
+
 def _run(
-    cmd: list, die_on_error: bool = True, capture_output=True, **kwargs
+    cmd: Cmd, die_on_error: bool = True, capture_output=True, **kwargs
 ) -> RunResult:
     # pylint: disable=E1120
     # (@link https://github.com/PyCQA/pylint/issues/1898)
@@ -631,69 +698,24 @@ def _run(
     return result
 
 
-def _run_sql(sql: str) -> str:
+def _run_sql(sql: str) -> t.Optional[str]:
     cmd = ["sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c", sql]
     process_result = _run(cmd)
     return process_result.stdout
 
 
-def _check_cmd_output_or_die(cmd: list, pattern: str, shell: bool = False) -> None:
+def _check_cmd_output_or_die(cmd: Cmd, pattern: str, shell: bool = False) -> None:
     output_ok = _check_cmd_output(cmd, pattern, shell=shell)
     if not output_ok:
         _report(f"Command '{cmd}' output does not match '{pattern}'", fatal=True)
         sys.exit(1)
 
 
-def _check_cmd_output(cmd: list, pattern: str, shell: bool = False) -> bool:
+def _check_cmd_output(cmd: Cmd, pattern: str, shell: bool = False) -> bool:
     process_result = _run(cmd, die_on_error=False, shell=shell)
     if not process_result.success:
         return False
-    match: bool = re.match(pattern, process_result.stdout, flags=re.M) != None
-    return match
-
-
-def _enable_and_start_service(service_name: str) -> None:
-    with _step(f"Enabling and starting Systemd service '{service_name}'...") as step:
-
-        with _step("Reloading Systemd...") as reloading_systemd_step:
-            systemd_reload_cmd = ["systemctl", "daemon-reload"]
-            _run(systemd_reload_cmd)
-            reloading_systemd_step.done("Systemd reloaded.")
-
-        with _step("Restarting Systemd service...") as restarting_service_step:
-            cmd = ["systemctl", "restart", service_name]
-            _run(cmd)
-            restarting_service_step("Service restarted.")
-
-        with _step("Enabling Systemd service...") as enabling_service_step:
-            cmd = ["systemctl", "enable", service_name]
-            _run(cmd)
-            enabling_service_step.done("Service enabled.")
-
-        _check_service_is_active_or_die(service_name)
-
-        step.done(f"Systemd service '{service_name}' enabled and started.")
-
-
-def _check_service_is_active(service_name: str) -> bool:
-    with _step(
-        f"Checking if Systemd service '{service_name}' is well and truly active..."
-    ) as step:
-        cmd = ["systemctl", "status", service_name]
-        process_result = _run(cmd, die_on_error=False)
-        is_active = (
-            process_result.success
-            and process_result.stdout.find("active (running)") > -1
-        )
-        step.done(f"Checking done ({'active' if is_active else 'not active'}).")
-        return is_active
-
-
-def _check_service_is_active_or_die(service_name: str) -> None:
-    is_active = _check_service_is_active(service_name)
-    if not is_active:
-        _report(f"Service '{service_name}' is not active.", fatal=True)
-        sys.exit(1)
+    return process_result.stdout_matches(pattern)
 
 
 def _report(
@@ -713,20 +735,20 @@ def _report(
             prefix = "│"
         elif step_done:
             prefix = "└"
-            _report._report_nb_levels -= 1
-        prefix = " " + ("  " * _report._report_nb_levels) + prefix
+            _report._report_nb_levels -= 1  # type: ignore
+        prefix = " " + ("  " * _report._report_nb_levels) + prefix  # type: ignore
 
     print(prefix, *args)
 
     if step_start and not fatal:
-        _report._report_nb_levels += 1
+        _report._report_nb_levels += 1  # type: ignore
 
 
-_report._report_nb_levels = 0
+_report._report_nb_levels = 0  # type: ignore
 
 
 @contextmanager
-def _ensuring_step(step_name: str) -> None:
+def _ensuring_step(step_name: str) -> t.Generator[None, None, None]:
     _report(f"Ensuring {step_name} is properly installed...", step_start=True)
     yield
     _report(f"{step_name} setup ok.\n", step_done=True)
@@ -744,7 +766,7 @@ class StepReporter:
 
 
 @contextmanager
-def _step(step_init_caption: str) -> StepReporter:
+def _step(step_init_caption: str) -> t.Generator[StepReporter, None, None]:
     _report(step_init_caption, step_start=True)
     yield StepReporter()
 
