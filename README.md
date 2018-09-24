@@ -1,5 +1,7 @@
 # Django server quick setup
 
+[![Build Status](https://travis-ci.org/DrBenton/django-app-server-setup.svg?branch=master)](https://travis-ci.org/DrBenton/django-app-server-setup)
+
 This is a all-in-one-with-no-dependencies Python script to provision a freshly created [Digital Ocean](https://www.digitalocean.com/) Droplet for Django.
 
 It installs the following:
