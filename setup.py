@@ -116,10 +116,18 @@ def ensure_nodejs() -> None:
         )
         if installed:
             _report("Node.js target version already installed.", step_done=True)
-            return
+        else:
+            _report("Node.js target version not installed.", step_done=True)
+            nodejs_install()
 
-        _report("Node.js target version not installed.", step_done=True)
-        nodejs_install()
+    with _ensuring_step("Yarn"):
+        _report("Checking if Yarn is already installed...", step_start=True)
+        installed = _check_cmd_output(["yarn", "--version"], r"^\d\.\d")
+        if installed:
+            _report("Yarn already installed.", step_done=True)
+        else:
+            _report("Yarn not installed.", step_done=True)
+            nodejs_install_yarn()
 
 
 def ensure_postgres() -> None:
@@ -417,6 +425,20 @@ def nodejs_install() -> None:
     _report(f"Node.js installed.", step_done=True)
 
 
+def nodejs_install_yarn() -> None:
+    _report("Installing Yarn...", step_start=True)
+    # @link https://yarnpkg.com/en/docs/install#debian-stable
+    cmd = """\
+curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
+echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
+apt-get update && \
+apt install --no-install-recommends yarn
+"""
+    _run(cmd, shell=True)
+    _check_cmd_output_or_die(["yarn", "--version"], r"^\d\.\d")
+    _report("Yarn installed.", step_done=True)
+
+
 def postgres_django_setup_ensure_db(db_name: str) -> None:
     def db_exists() -> bool:
         check_db_sql = (
@@ -437,7 +459,7 @@ def postgres_django_setup_ensure_db(db_name: str) -> None:
 
 def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) -> None:
     def user_exists() -> bool:
-        check_user_sql = f"""\du {user};"""
+        check_user_sql = f"""\\du {user};"""
         result = _run_sql(check_user_sql)
         return result.find(user) > -1
 
@@ -573,13 +595,16 @@ class SubProcessError(RuntimeError):
         self.process_result = process_result
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.cmd!r}, '${self.process_result}')"
+        return f"{self.__class__.__name__}({self.cmd!r}, '${self.process_result!r}')"
 
 
 def _run(
     cmd: list, die_on_error: bool = True, capture_output=True, **kwargs
 ) -> RunResult:
-    # no "capture_output" param in Python < 3.7, so we have to deal with "stdout" & "stderr" manually :-/
+    # pylint: disable=E1120
+    # (@link https://github.com/PyCQA/pylint/issues/1898)
+
+    # No "capture_output" param in Python < 3.7, so we have to deal with "stdout" & "stderr" manually :-/
     if capture_output == True and kwargs.get("stdout") is None:
         kwargs["stdout"] = subprocess.PIPE
     if capture_output == True and kwargs.get("stderr") is None:
@@ -709,7 +734,7 @@ _report._report_nb_levels = 0
 def _ensuring_step(step_name: str) -> None:
     _report(f"Ensuring {step_name} is properly installed...", step_start=True)
     yield
-    _report(f"{step_name} setup ok. 👍\n", step_done=True)
+    _report(f"{step_name} setup ok ✓\n", step_done=True)
 
 
 _GUNICORN_SOCKET_FILE = """\

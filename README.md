@@ -6,10 +6,10 @@ It installs the following:
 
 - Python 3.7 (and pip)
 - Postgres 10 (server and client)
-- Node.js 10 (can always be useful in order to handle front-end assets)
+- Node.js 10 and Yarn
 - Nginx
 - Gunicorn
-- pipenv
+- Pipenv
 
 It also sets up the following:
 
