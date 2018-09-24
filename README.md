@@ -13,10 +13,12 @@ It installs the following:
 
 It also sets up the following:
 
-- a firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) which only allows OpenSSH and Nginx ports
+- firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) rules which only allow OpenSSH and Nginx ports
 - a Systemd service for Gunicorn, and configures Nginx to be a proxy to Gunicorn.
 - a "django" Linux user, belonging to the "www-data" group
 - a "django" Postgres user, dedicated to our app
+
+![screenshot](/.README/screenshot.png)
 
 If no Django app is found in the "_/home/django/django-app/current_" folder, a blank one is created there: all you have to do is to `git clone` your own app somewhere on the server, and symlink it to that folder when it's ready.
 
@@ -69,14 +71,28 @@ This is a quick-n-dirty provisioning script; it works for me, but use it at your
 
 > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Troubleshooting
+## How-to & troubleshooting
 
-- "_DisallowedHost at /_" Django error:
+- Reload Gunicorn gracefully after a code update:
+  ```bash
+  $ GUNICORN_PID=$(systemctl show -p MainPID gunicorn 2>/dev/null | cut -d= -f2)
+  $ sudo kill -HUP ${GUNICORN_PID}
+  ```
+- Connect to Postgres with the "django_app" user:
+  ```bash
+  $ psql django_app -h 127.0.0.1 -d django_app
+  ```
+- Change the password for the "django" Postgres user:
+  ```bash
+  $ sudo -u postgres psql -c "alter role django_app with password '${NEW_PASSWORD}'"
+  ```
+- Solve the "_DisallowedHost at /_" Django error:
+
   ```bash
   root@droplet:~ sed -i -r \
     "s~^ALLOWED_HOSTS = .+$~ALLOWED_HOSTS = ['$(hostname -I | cut -d ' ' -f 1)']~" \
     django-app/current/project/settings.py
-  root@droplet:~ systemctl restart gunicorn
+  root@droplet:~ systemctl restart gunicorn # or graceful restart
   ```
 
 ## Testing
