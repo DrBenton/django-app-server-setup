@@ -1,0 +1,7 @@
+language: python
+python:
+  - "3.6"
+install:
+  - pip install black mypy pylint
+script:
+  - make --no-print-directory check-code-quality
