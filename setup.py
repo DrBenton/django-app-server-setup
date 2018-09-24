@@ -107,27 +107,23 @@ def ensure_python() -> None:
 
 def ensure_nodejs() -> None:
     with _ensuring_step("Node.js"):
-        _report(
-            f"Checking if Node.js 'v{TARGET_NODEJS_VERSION}' is already installed...",
-            step_start=True,
-        )
-        installed = _check_cmd_output(
-            ["node", "--version"], r"^v" + re.escape(TARGET_NODEJS_VERSION)
-        )
-        if installed:
-            _report("Node.js target version already installed.", step_done=True)
-        else:
-            _report("Node.js target version not installed.", step_done=True)
-            nodejs_install()
+        with _step(f"Checking Node.js 'v{TARGET_NODEJS_VERSION}' status...") as step:
+            installed = _check_cmd_output(
+                ["node", "--version"], r"^v" + re.escape(TARGET_NODEJS_VERSION)
+            )
+            if installed:
+                step.nothing_to_do("Node.js target version already installed.")
+            else:
+                step.done("Node.js target version not installed.")
+                nodejs_install()
 
-    with _ensuring_step("Yarn"):
-        _report("Checking if Yarn is already installed...", step_start=True)
-        installed = _check_cmd_output(["yarn", "--version"], r"^\d\.\d")
-        if installed:
-            _report("Yarn already installed.", step_done=True)
-        else:
-            _report("Yarn not installed.", step_done=True)
-            nodejs_install_yarn()
+        with _step("Checking Yarn status...") as step:
+            installed = _check_cmd_output(["yarn", "--version"], r"^\d\.\d")
+            if installed:
+                step.nothing_to_do("Yarn already installed.")
+            else:
+                step.done("Yarn not installed.")
+                nodejs_install_yarn()
 
 
 def ensure_postgres() -> None:
@@ -204,41 +200,40 @@ def ensure_gunicorn_and_nginx_services_setup() -> None:
 
 
 def is_debian_package_installed(name: str) -> bool:
-    _report(
-        f"Checking if the Debian package '{name}' is already installed...",
-        step_start=True,
-    )
-    cmd = ["dpkg", "-s", name]
-    try:
-        process_result = _run(cmd)
-        installed = process_result.stdout.find("Status: install ok installed") > -1
-    except SubProcessError:
-        installed = False
-    if installed:
-        _report("Debian package already installed.", step_done=True)
-    else:
-        _report("Debian package not installed.", step_done=True)
-    return installed
+    with _step(
+        f"Checking if the Debian package '{name}' is already installed..."
+    ) as step:
+        cmd = ["dpkg", "-s", name]
+        try:
+            process_result = _run(cmd)
+            installed = process_result.stdout.find("Status: install ok installed") > -1
+        except SubProcessError:
+            installed = False
+        if installed:
+            step.nothing_to_do("Debian package already installed.")
+        else:
+            step.done("Debian package not installed.")
+        return installed
 
 
 def is_ppa_installed(name: str) -> bool:
-    _report(f"Checking PPA '{name}'...", step_start=True)
-    cmd = f"grep -r 'deb http://ppa.launchpad.net/{name}/ppa/ubuntu' /etc/apt/ || true"
-    process_result = _run(cmd, shell=True)
-    installed = bool(process_result.stdout)
-    if installed:
-        _report("PPA already installed.", step_done=True)
-    else:
-        _report("PPA not installed.", step_done=True)
-    return installed
+    with _step(f"Checking PPA '{name}'...") as step:
+        cmd = f"grep -r 'deb http://ppa.launchpad.net/{name}/ppa/ubuntu' /etc/apt/ || true"
+        process_result = _run(cmd, shell=True)
+        installed = bool(process_result.stdout)
+        if installed:
+            step.nothing_to_do("PPA already installed.")
+        else:
+            step.done("PPA not installed.")
+        return installed
 
 
 def install_ppa(name: str) -> None:
-    _report(f"Adding PPA '{name}'...", step_start=True)
-    cmd = ["add-apt-repository", "-y", f"ppa:{name}/ppa"]
-    _run(cmd, stdout=None)
-    apt_update()
-    _report("PPA added.", step_done=True)
+    with _step(f"Adding PPA '{name}'...") as step:
+        cmd = ["add-apt-repository", "-y", f"ppa:{name}/ppa"]
+        _run(cmd, stdout=None)
+        apt_update()
+        step.done("PPA added.")
 
 
 def is_root() -> bool:
@@ -268,29 +263,29 @@ def install_debian_package_if_needed(name: str) -> bool:
 
 
 def apt_update() -> None:
-    _report("Updating APT repositories...", step_start=True)
-    cmd = ["apt", "update"]
-    _run(cmd)
-    _report("Updated.", step_done=True)
+    with _step("Updating APT repositories...") as step:
+        cmd = ["apt", "update"]
+        _run(cmd)
+        step.done("Updated.")
 
 
 def apt_install(name: str) -> None:
-    _report(f"Installing Debian package '{name}'...", step_start=True)
-    cmd = ["apt", "install", "-y", name]
-    _run(cmd)
-    _report("Installed.", step_done=True)
+    with _step(f"Installing Debian package '{name}'...") as step:
+        cmd = ["apt", "install", "-y", name]
+        _run(cmd)
+        step.done("Installed.")
 
 
 def is_python_package_installed(name: str) -> bool:
-    _report(f"Checking Python package '{name}'...", step_start=True)
-    cmd = f"pip list | grep '{name} '"
-    process_result = _run(cmd, die_on_error=False, shell=True)
-    installed = process_result.success and process_result.stdout.startswith(name)
-    if installed:
-        _report("Python package already installed.", step_done=True)
-    else:
-        _report("Python package not installed.", step_done=True)
-    return installed
+    with _step(f"Checking Python package '{name}'...") as step:
+        cmd = f"pip list | grep '{name} '"
+        process_result = _run(cmd, die_on_error=False, shell=True)
+        installed = process_result.success and process_result.stdout.startswith(name)
+        if installed:
+            step.nothing_to_do("Python package already installed.")
+        else:
+            step.done("Python package not installed.")
+        return installed
 
 
 def install_python_package_if_needed(name: str) -> bool:
@@ -302,31 +297,31 @@ def install_python_package_if_needed(name: str) -> bool:
 
 
 def install_python_package(name: str) -> None:
-    _report(f"Installing Python package '{name}'...", step_start=True)
-    cmd = ["pip", "install", name]
-    _run(cmd)
-    _report("Installed.", step_done=True)
+    with _step(f"Installing Python package '{name}'...") as step:
+        cmd = ["pip", "install", name]
+        _run(cmd)
+        step.done("Installed.")
 
 
 def has_linux_user(user: str) -> bool:
-    _report(f"Checking if user '{user}' exists...", step_start=True)
-    cmd = f"grep '^{user}:' /etc/passwd"
-    process_result = _run(cmd, shell=True, die_on_error=False)
-    user_exists = process_result.success and process_result.stdout.startswith(user)
-    _report(
-        f"Checked ({'exists' if user_exists else 'does not exist'}).", step_done=True
-    )
-    return user_exists
+    with _step(f"Checking user '{user}' status...") as step:
+        cmd = f"grep '^{user}:' /etc/passwd"
+        process_result = _run(cmd, shell=True, die_on_error=False)
+        user_exists = process_result.success and process_result.stdout.startswith(user)
+        if user_exists:
+            step.nothing_to_do("User checked (already exists).")
+        else:
+            step.done("User checked (doesn't exist').")
+        return user_exists
 
 
 def create_linux_user(user: str, group: str, shell: str = "/bin/bash") -> None:
-    _report(
-        f"Creating Linux user '{user}:{group}', with shell '{shell}'...",
-        step_start=True,
-    )
-    cmd = ["useradd", "-m", "-s", shell, "-g", group, user]
-    _run(cmd)
-    _report("Created.", step_done=True)
+    with _step(
+        f"Creating Linux user '{user}:{group}', with shell '{shell}'..."
+    ) as step:
+        cmd = ["useradd", "-m", "-s", shell, "-g", group, user]
+        _run(cmd)
+        step.done("Created.")
 
 
 def check_file_content(path: str, expected_content: str) -> bool:
@@ -338,23 +333,22 @@ def check_file_content(path: str, expected_content: str) -> bool:
 
 
 def create_file_if_needed(path: str, content: str) -> None:
-    _report(
-        f"Checking if the file '{path}' already exists and have the expected content...",
-        step_start=True,
-    )
-    file_is_ok = check_file_content(path, content)
-    if not file_is_ok:
-        _report("Ok, we have to (re?)create it.", step_done=True)
-        create_file(path, content)
-    else:
-        _report("No need to create it.", step_done=True)
+    with _step(
+        f"Checking if the file '{path}' already exists and have the expected content..."
+    ) as step:
+        file_is_ok = check_file_content(path, content)
+        if file_is_ok:
+            step.nothing_to_do("No need to create it.")
+        else:
+            step.done("Ok, we have to (re?)create it.")
+            create_file(path, content)
 
 
 def create_file(path: str, content: str) -> None:
-    _report(f"Creating file '{path}'...", step_start=True)
-    with open(path, mode="w") as f:
-        f.write(content)
-    _report(f"File created.", step_done=True)
+    with _step(f"Creating file '{path}'...") as step:
+        with open(path, mode="w") as f:
+            f.write(content)
+        step.done(f"File created.")
 
 
 def nginx_enable_site(site_name: str) -> bool:
@@ -365,33 +359,33 @@ def nginx_enable_site(site_name: str) -> bool:
         and Path(nginx_site_source_path).is_file()
     ):
         return False
-    _report(f"Enabling Nginx site '{site_name}'...", step_start=True)
-    cmd = ["ln", "-s", "-f", nginx_site_source_path, nginx_site_target_path]
-    _run(cmd)
-    _report("Nginx site enabled..", step_done=True)
-    return True
+
+    with _step(f"Enabling Nginx site '{site_name}'...") as step:
+        cmd = ["ln", "-s", "-f", nginx_site_source_path, nginx_site_target_path]
+        _run(cmd)
+        step.done("Nginx site enabled.")
+        return True
 
 
 def nginx_disable_site_if_needed(site_name: str) -> bool:
     nginx_site_path = f"{_NGINX_ENABLED_SITES_PATH}/{site_name}"
     if not Path(nginx_site_path).is_symlink():
         return False
-    _report(f"Disabling Nginx site '{site_name}'...", step_start=True)
-    cmd = ["rm", nginx_site_path]
-    _run(cmd)
-    _report("Nginx site disabled..", step_done=True)
-    return True
+
+    with _step(f"Disabling Nginx site '{site_name}'...") as step:
+        cmd = ["rm", nginx_site_path]
+        _run(cmd)
+        step.done("Nginx site disabled.")
+        return True
 
 
 def nginx_check_config() -> bool:
-    _report("Checking Nginx config...", step_start=True)
-    check_cmd = ["nginx", "-t"]
-    process_result = _run(check_cmd, die_on_error=False)
-    config_ok = process_result.success
-    _report(
-        f"Nginx config checked ({'ok' if config_ok else 'broken'}).", step_done=True
-    )
-    return config_ok
+    with _step("Checking Nginx config...") as step:
+        check_cmd = ["nginx", "-t"]
+        process_result = _run(check_cmd, die_on_error=False)
+        config_ok = process_result.success
+        step.done(f"Nginx config checked ({'ok' if config_ok else 'broken'}).")
+        return config_ok
 
 
 def nginx_check_config_or_die() -> None:
@@ -407,39 +401,42 @@ def nginx_check_config_or_die() -> None:
 
 
 def python_install_pip() -> None:
-    _report(f"Installing pip...", step_start=True)
-    dl_cmd = "curl -L -sS 'https://bootstrap.pypa.io/get-pip.py' -o get-pip.py"
-    _run(dl_cmd, shell=True)
-    install_cmd = f"python{TARGET_PYTHON_VERSION} get-pip.py"
-    _run(install_cmd, shell=True)
-    _report(f"pip installed.", step_done=True)
+    with _step("Installing pip...") as step:
+        dl_cmd = "curl -L -sS 'https://bootstrap.pypa.io/get-pip.py' -o get-pip.py"
+        _run(dl_cmd, shell=True)
+        install_cmd = f"python{TARGET_PYTHON_VERSION} get-pip.py"
+        _run(install_cmd, shell=True)
+        step.done("pip installed.")
 
 
 def nodejs_install() -> None:
-    _report(f"Installing Node.js...", step_start=True)
-    cmd = f"curl 'https://nodejs.org/dist/v{TARGET_NODEJS_VERSION}/node-v{TARGET_NODEJS_VERSION}-linux-x64.tar.xz' | sudo tar --file=- --extract --xz --directory /usr/local/ --strip-components=1"
-    _run(cmd, shell=True)
-    _check_cmd_output_or_die(
-        ["node", "--version"], r"^v" + re.escape(TARGET_NODEJS_VERSION)
-    )
-    _report(f"Node.js installed.", step_done=True)
+    with _step("Installing Node.js...") as step:
+        cmd = f"""\
+curl 'https://nodejs.org/dist/v{TARGET_NODEJS_VERSION}/node-v{TARGET_NODEJS_VERSION}-linux-x64.tar.xz' \
+| sudo tar --file=- --extract --xz --directory /usr/local/ --strip-components=1 \
+"""
+        _run(cmd, shell=True)
+        _check_cmd_output_or_die(
+            ["node", "--version"], r"^v" + re.escape(TARGET_NODEJS_VERSION)
+        )
+        step.done(f"Node.js installed.")
 
 
 def nodejs_install_yarn() -> None:
-    _report("Installing Yarn...", step_start=True)
-    # @link https://yarnpkg.com/en/docs/install#debian-stable
-    cmd = """\
+    with _step("Installing Yarn...") as step:
+        # @link https://yarnpkg.com/en/docs/install#debian-stable
+        cmd = """\
 curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
 echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
 apt-get update && \
 apt install --no-install-recommends yarn
 """
-    _run(cmd, shell=True)
-    _check_cmd_output_or_die(["yarn", "--version"], r"^\d\.\d")
-    _report("Yarn installed.", step_done=True)
+        _run(cmd, shell=True)
+        _check_cmd_output_or_die(["yarn", "--version"], r"^\d\.\d")
+        step.done("Yarn installed.")
 
 
-def postgres_django_setup_ensure_db(db_name: str) -> None:
+def postgres_django_setup_ensure_db(db_name: str) -> bool:
     def db_exists() -> bool:
         check_db_sql = (
             f"""select datname from pg_database where datname = '{db_name}';"""
@@ -447,14 +444,17 @@ def postgres_django_setup_ensure_db(db_name: str) -> None:
         result = _run_sql(check_db_sql)
         return result.find(db_name) > -1
 
-    _report(f"Checking if database '{db_name}' already exists...", step_start=True)
-    if not db_exists():
-        postgres_django_setup_create_db(db_name=db_name)
-        if not db_exists():
-            _report("Could not create database", fatal=True)
-            sys.exit(1)
-
-    _report(f"Database ok.", step_done=True)
+    with _step(f"Checking database '{db_name}' status...") as step:
+        if db_exists():
+            step.nothing_to_do("Database exists.")
+            return False
+        else:
+            postgres_django_setup_create_db(db_name=db_name)
+            if not db_exists():
+                _report("Could not create database", fatal=True)
+                sys.exit(1)
+            step.done("Database created.")
+            return True
 
 
 def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) -> None:
@@ -463,21 +463,25 @@ def postgres_django_setup_ensure_user(user: str, password: str, db_name: str) ->
         result = _run_sql(check_user_sql)
         return result.find(user) > -1
 
-    _report(f"Checking if user '{user}' already exists...", step_start=True)
-    if not user_exists():
-        postgres_django_setup_create_user(user=user, password=password, db_name=db_name)
-        if not user_exists():
-            _report("Could not create user", fatal=True)
-            sys.exit(1)
-
-    _report(f"User ok.", step_done=True)
+    with _step(f"Checking database user '{user}' status...") as step:
+        if user_exists():
+            step.nothing_to_do("Database user exists.")
+            return False
+        else:
+            postgres_django_setup_create_user(
+                user=user, password=password, db_name=db_name
+            )
+            if not user_exists():
+                _report("Could not create user", fatal=True)
+                sys.exit(1)
+            step.done("User ok.")
 
 
 def postgres_django_setup_create_db(db_name: str) -> None:
-    _report(f"Creating database '{db_name}'...", step_start=True)
-    create_db_sql = f"""create database {db_name};"""
-    _run_sql(create_db_sql)
-    _report(f"Database created.", step_done=True)
+    with _step(f"Creating database '{db_name}'...") as step:
+        create_db_sql = f"""create database {db_name};"""
+        _run_sql(create_db_sql)
+        step.done(f"Database created.")
 
 
 def postgres_django_setup_create_user(user: str, password: str, db_name: str) -> None:
@@ -487,16 +491,16 @@ def postgres_django_setup_create_user(user: str, password: str, db_name: str) ->
         password = secrets.token_urlsafe(16)
 
     if len(password) < POSTGRES_PASSWORD_MIN_LENGTH:
-        print(
-            f"Postgres user password is too short (minimum length: {POSTGRES_PASSWORD_MIN_LENGTH}) 💀"
+        _report(
+            f"Postgres user password is too short (minimum length: {POSTGRES_PASSWORD_MIN_LENGTH})",
+            fatal=True,
         )
         sys.exit(1)
 
-    _report(
-        f"Creating user '{user}' with password '{password}' with all privileges on database '{db_name}'...",
-        step_start=True,
-    )
-    create_user_sql = f"""\
+    with _step(
+        f"Creating user '{user}' with password '{password}' with all privileges on database '{db_name}'..."
+    ) as step:
+        create_user_sql = f"""\
 begin;
 create user {user} with password '{password}';
 alter role {user} set client_encoding to 'utf8';
@@ -505,8 +509,8 @@ alter role {user} set timezone to 'UTC';
 grant all privileges on database {db_name} to {user};
 commit;
 """
-    _run_sql(create_user_sql)
-    _report(f"User created.", step_done=True)
+        _run_sql(create_user_sql)
+        step.done("User created.")
 
 
 def gunicorn_and_nginx_services_activate_nginx_site_if_needed(
@@ -515,66 +519,62 @@ def gunicorn_and_nginx_services_activate_nginx_site_if_needed(
     nginx_disable_site_if_needed("default")
 
     nginx_site_target_file = f"{enabled_sites_path}/{site_name}"
-    _report(
-        f"Checking nginx enabled symlink '{nginx_site_target_file}'...", step_start=True
-    )
-    nginx_site_target_ok = check_file_content(nginx_site_target_file, site_config)
-    if nginx_site_target_ok:
-        _report(f"Nginx site already enabled.", step_done=True)
-    else:
-        nginx_enable_site(site_name)
-        nginx_check_config_or_die()
-        _report(f"Nginx site enabled.", step_done=True)
+    with _step(f"Checking nginx enabled symlink '{nginx_site_target_file}'...") as step:
+        nginx_site_target_ok = check_file_content(nginx_site_target_file, site_config)
+        if nginx_site_target_ok:
+            step.nothing_to_do("Nginx site already enabled.")
+        else:
+            nginx_enable_site(site_name)
+            nginx_check_config_or_die()
+            step.done("Nginx site enabled.")
 
 
-def create_blank_django_app_if_needed(app_dir: str, app_project_name: str) -> None:
-    _report(
-        f"Checking if we have a Django app in the '{app_dir}' folder (project '{app_project_name}')...",
-        step_start=True,
-    )
-    django_settings_file_path = f"{app_dir}/{app_project_name}/wsgi.py"
-    if Path(app_dir).is_dir() and Path(django_settings_file_path).is_file():
-        _report("Django app found.", step_done=True)
-        return
-    _report(
-        "Django app not found! Let's create a blank one for the moment.", step_wip=True
-    )
-    create_blank_django_app(app_dir, app_project_name)
-    _report("Blank Django app created.", step_done=True)
+def create_blank_django_app_if_needed(app_dir: str, app_project_name: str) -> bool:
+    with _step(
+        f"Checking if we have a Django app in the '{app_dir}' folder (project '{app_project_name}')..."
+    ) as step:
+        django_settings_file_path = f"{app_dir}/{app_project_name}/wsgi.py"
+        if Path(app_dir).is_dir() and Path(django_settings_file_path).is_file():
+            step.nothing_to_do("Django app found.")
+            return
+        step.wip("Django app not found! Let's create a blank one for the moment.")
+        create_blank_django_app(app_dir, app_project_name)
+        step.done("Blank Django app created.")
 
 
 def create_blank_django_app(app_dir: str, app_project_name: str) -> None:
-    _report(
-        f"Creating a blank Django project '{app_project_name}' in {app_dir}...",
-        step_start=True,
-    )
+    with _step(
+        f"Creating a blank Django project '{app_project_name}' in {app_dir}..."
+    ) as step:
 
-    install_python_package_if_needed("django")
+        install_python_package_if_needed("django")
 
-    os.makedirs(app_dir, exist_ok=True)
-    create_project_cmd = [
-        f"python{TARGET_PYTHON_VERSION}",
-        "/usr/local/bin/django-admin",
-        "startproject",
-        app_project_name,
-        app_dir,
-    ]
-    _run(create_project_cmd)
+        os.makedirs(app_dir, exist_ok=True)
+        create_project_cmd = [
+            f"python{TARGET_PYTHON_VERSION}",
+            "/usr/local/bin/django-admin",
+            "startproject",
+            app_project_name,
+            app_dir,
+        ]
+        _run(create_project_cmd)
 
-    chown_cmd = ["chown", "-R", f"{LINUX_USER}:{LINUX_GROUP}", app_dir]
-    _run(chown_cmd)
+        chown_cmd = ["chown", "-R", f"{LINUX_USER}:{LINUX_GROUP}", app_dir]
+        _run(chown_cmd)
 
-    _report("Adding the server IP address to Django's ALLOWED_HOSTS...", step_done=True)
-    update_django_allowed_hosts = f"""\
+        with _step(
+            "Adding the server IP address to Django's ALLOWED_HOSTS..."
+        ) as django_hosts_step:
+            update_django_allowed_hosts_cmd = f"""\
 sed -i -r \
 "s~^ALLOWED_HOSTS = .+$~ALLOWED_HOSTS = ['$(hostname -I | cut -d ' ' -f 1)']~" \
 {app_dir}/{app_project_name}/settings.py    
 """
-    _run(update_django_allowed_hosts, shell=True)
-    _report("Django ALLOWED_HOSTS updated.", step_done=True)
+            _run(update_django_allowed_hosts_cmd, shell=True)
+            django_hosts_step.done("Django ALLOWED_HOSTS updated.")
 
-    _report("Blank Django project created.", step_done=True)
-    _report(r"/!\ Beware! This app is in DEBUG mode at the moment.")
+        step.done("Blank Django project created.")
+        _report(r"/!\ Beware! This app is in DEBUG mode at the moment.")
 
 
 ##################
@@ -634,7 +634,6 @@ def _run(
 def _run_sql(sql: str) -> str:
     cmd = ["sudo", "-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-c", sql]
     process_result = _run(cmd)
-    # print(process_result.stdout)
     return process_result.stdout
 
 
@@ -654,44 +653,40 @@ def _check_cmd_output(cmd: list, pattern: str, shell: bool = False) -> bool:
 
 
 def _enable_and_start_service(service_name: str) -> None:
-    _report(
-        f"Enabling and starting Systemd service '{service_name}'...", step_start=True
-    )
+    with _step(f"Enabling and starting Systemd service '{service_name}'...") as step:
 
-    _report(f"Reloading Systemd...", step_start=True)
-    systemd_reload_cmd = ["systemctl", "daemon-reload"]
-    _run(systemd_reload_cmd)
-    _report(f"Systemd reloaded.", step_done=True)
+        with _step("Reloading Systemd...") as reloading_systemd_step:
+            systemd_reload_cmd = ["systemctl", "daemon-reload"]
+            _run(systemd_reload_cmd)
+            reloading_systemd_step.done("Systemd reloaded.")
 
-    _report(f"Restarting Systemd service...", step_start=True)
-    cmd = ["systemctl", "restart", service_name]
-    _run(cmd)
-    _report("Service restarted.", step_done=True)
+        with _step("Restarting Systemd service...") as restarting_service_step:
+            cmd = ["systemctl", "restart", service_name]
+            _run(cmd)
+            restarting_service_step("Service restarted.")
 
-    _report(f"Enabling Systemd service...", step_start=True)
-    cmd = ["systemctl", "enable", service_name]
-    _run(cmd)
-    _report("Service enabled.", step_done=True)
+        with _step("Enabling Systemd service...") as enabling_service_step:
+            cmd = ["systemctl", "enable", service_name]
+            _run(cmd)
+            enabling_service_step.done("Service enabled.")
 
-    _check_service_is_active_or_die(service_name)
+        _check_service_is_active_or_die(service_name)
 
-    _report(f"Systemd service '{service_name}' enabled and started.", step_done=True)
+        step.done(f"Systemd service '{service_name}' enabled and started.")
 
 
 def _check_service_is_active(service_name: str) -> bool:
-    _report(
-        f"Checking if Systemd service '{service_name}' is well and truly active...",
-        step_start=True,
-    )
-    cmd = ["systemctl", "status", service_name]
-    process_result = _run(cmd, die_on_error=False)
-    is_active = (
-        process_result.success and process_result.stdout.find("active (running)") > -1
-    )
-    _report(
-        f"Checking done ({'active' if is_active else 'not active'}).", step_done=True
-    )
-    return is_active
+    with _step(
+        f"Checking if Systemd service '{service_name}' is well and truly active..."
+    ) as step:
+        cmd = ["systemctl", "status", service_name]
+        process_result = _run(cmd, die_on_error=False)
+        is_active = (
+            process_result.success
+            and process_result.stdout.find("active (running)") > -1
+        )
+        step.done(f"Checking done ({'active' if is_active else 'not active'}).")
+        return is_active
 
 
 def _check_service_is_active_or_die(service_name: str) -> None:
@@ -734,7 +729,24 @@ _report._report_nb_levels = 0
 def _ensuring_step(step_name: str) -> None:
     _report(f"Ensuring {step_name} is properly installed...", step_start=True)
     yield
-    _report(f"{step_name} setup ok ✓\n", step_done=True)
+    _report(f"{step_name} setup ok.\n", step_done=True)
+
+
+class StepReporter:
+    def wip(self, caption: str) -> None:
+        _report(caption, step_wip=True)
+
+    def nothing_to_do(self, caption: str) -> None:
+        _report(f"{caption} ✓", step_done=True)
+
+    def done(self, caption: str) -> None:
+        _report(caption, step_done=True)
+
+
+@contextmanager
+def _step(step_init_caption: str) -> StepReporter:
+    _report(step_init_caption, step_start=True)
+    yield StepReporter()
 
 
 _GUNICORN_SOCKET_FILE = """\
