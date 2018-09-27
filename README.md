@@ -1,10 +1,12 @@
 # Django server quick setup
 
-[![Build Status](https://travis-ci.org/DrBenton/django-app-server-setup.svg?branch=master)](https://travis-ci.org/DrBenton/django-app-server-setup)
+![https://travis-ci.org/DrBenton/django-app-server-setup](https://travis-ci.org/DrBenton/django-app-server-setup.svg?branch=master)
+![https://github.com/ambv/black](https://img.shields.io/badge/code%20style-black-000000.svg)
 
-This is a all-in-one-with-no-dependencies Python script to provision a freshly created [Digital Ocean](https://www.digitalocean.com/) Droplet for Django.
+This is a all-in-one-with-no-dependencies Python script to provision a freshly created [Digital Ocean](https://www.digitalocean.com/) Droplet for Django.  
+_(it can likely be used on any other server running Ubuntu 18.04, but I only used and tested it on Digital Ocean ones :-)_
 
-It installs the following:
+It installs these softwares:
 
 - Python 3.7 (and pip)
 - Postgres 10 (server and client)
@@ -17,8 +19,9 @@ It also sets up the following:
 
 - firewall ([ufw](https://en.wikipedia.org/wiki/Uncomplicated_Firewall)) rules which only allow OpenSSH and Nginx ports
 - a Systemd service for Gunicorn, and configures Nginx to be a proxy to Gunicorn.
+- a "sshuser" Linux user (group "sshgroup") with `sudo` access and the same authorized keys than the _root_ user (which has your public key if you create the Droplet with that option - which is very likely)
 - a "django" Linux user, belonging to the "www-data" group
-- a "django" Postgres user, dedicated to our app
+- a "django_app" Postgres database, with a "django_app" Postgres user, both dedicated to our app
 
 ![screenshot](/.README/screenshot.png)
 
@@ -30,17 +33,19 @@ Like in Ansible, before doing anything, that script always tries to check that t
 
 ## Usage
 
+On a newly created Ubuntu 18.04 server:
+
 ```bash
 $ git clone https://github.com/DrBenton/django-app-server-setup.git
 $ cd django-app-server-setup
-$ scp ./setup.py root@[DROPLET IP]:/root/django_setup.py
-$ ssh root@[DROPLET IP]
+$ scp ./setup.py root@[SERVER IP]:/root/django_setup.py
+$ ssh root@[SERVER IP]
 # (optional but recommended: update the server and reboot it)
 root@droplet:~ apt update && apt upgrade && reboot
-$ ssh root@[DROPLET IP] # if you updated and rebooted the server
+$ ssh root@[SERVER IP] # if you updated and rebooted the server
 root@droplet:~ chmod +x django_setup.py
 root@droplet:~ python3.6 django_setup.py
-# Visit "http://[DROPLET IP]", and you should see the Django "Welcome" page! :-)
+# Visit "http://[SERVER IP]", and you should see the Django "Welcome" page! :-)
 ```
 
 ## Customising the setup
@@ -51,6 +56,10 @@ Here are a few environment variables you can set prior to running this script, i
 - `POSTGRES_USER` _(default: "django_app")_
 - `POSTGRES_PASSWORD` _(default: a new one will be generated, and displayed once during the setup)_
 - `NGINX_SERVER_NAME` _(default: no `server_name` directive in the Nginx site config)_
+- `LINUX_USER_DJANGO_USERNAME` _(default: "django")_ the Linux username for the django app (it will have a home directory and the Systemd service will belong to that user)
+- `LINUX_USER_DJANGO_GROUPNAME` _(default: "www-data")_ the Linux groupname for that same Linux user
+- `LINUX_USER_SSH_USERNAME` _(default: "sshuser")_ the Linux username for the SSH app (it will have a home directory and have access to `sudo`)
+- `LINUX_USER_SSH_GROUPNAME` _(default: "sshgroup")_ the Linux groupname for that same Linux user
 
 ## Requirements
 

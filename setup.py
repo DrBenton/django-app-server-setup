@@ -25,13 +25,17 @@ TARGET_NODEJS_VERSION = "10.11.0"
 TARGET_POSTGRES_VERSION = "10"
 POSTGRES_PASSWORD_MIN_LENGTH = 10
 
-LINUX_USER = "django"
-LINUX_GROUP = "www-data"
+LINUX_USER_SSH_USERNAME = os.getenv("LINUX_USER_SSH_USERNAME", "sshuser")
+LINUX_USER_SSH_GROUPNAME = os.getenv("LINUX_USER_SSH_USERNAME", "sshgroup")
 
-DJANGO_APP_DIR = f"/home/{LINUX_USER}/django-app/current"
+LINUX_USER_DJANGO_USERNAME = os.getenv("LINUX_USER_DJANGO_USERNAME", "django")
+LINUX_USER_DJANGO_GROUPNAME = os.getenv("LINUX_USER_DJANGO_GROUPNAME", "www-data")
+
+DJANGO_APP_DIR = f"/home/{LINUX_USER_DJANGO_USERNAME}/django-app/current"
 DJANGO_PROJECT_NAME = "project"
 
 # @link https://www.digitalocean.com/community/tutorials/how-to-set-up-django-with-postgres-nginx-and-gunicorn-on-ubuntu-18-04
+# @link https://www.digitalocean.com/community/tutorials/initial-server-setup-with-ubuntu-18-04
 
 ##################
 # High level functions: those that we use to install specific software on the server
@@ -42,13 +46,13 @@ def setup_server() -> None:
     flight_precheck()
 
     ensure_firewall()
+    ensure_linux_users_setup()
+
     ensure_base_software()
     ensure_python()
     ensure_nodejs()
     ensure_postgres()
     ensure_nginx()
-
-    ensure_linux_user_setup()
 
     ensure_postgres_django_setup()
     ensure_python_app_packages_setup()
@@ -88,6 +92,18 @@ def ensure_firewall() -> None:
         if firewall_rule_check_status("OpenSSH") is not FirewallRuleStatus.ALLOW:
             _panic("OpenSSH firewall rule is not allowed!")
 
+
+def ensure_linux_users_setup() -> None:
+    with _ensuring_step("Linux users"):
+        if not has_linux_user(LINUX_USER_SSH_USERNAME):
+            create_linux_user(
+                LINUX_USER_SSH_USERNAME,
+                LINUX_USER_SSH_GROUPNAME,
+                sudoer=True,
+                with_root_ssh_authorised_keys=True,
+            )
+        if not has_linux_user(LINUX_USER_DJANGO_USERNAME):
+            create_linux_user(LINUX_USER_DJANGO_USERNAME, LINUX_USER_DJANGO_GROUPNAME)
 
 def ensure_base_software() -> None:
     with _ensuring_step("Curl"):
@@ -176,11 +192,6 @@ def ensure_python_app_packages_setup() -> None:
         install_python_package_if_needed("psycopg2-binary")
         install_python_package_if_needed("pipenv")
 
-
-def ensure_linux_user_setup() -> None:
-    with _ensuring_step("Linux user"):
-        if not has_linux_user(LINUX_USER):
-            create_linux_user(LINUX_USER, LINUX_GROUP)
 
 
 def ensure_django_app() -> None:
@@ -401,12 +412,38 @@ def has_linux_user(user: str) -> bool:
         return user_exists
 
 
-def create_linux_user(user: str, group: str, shell: str = "/bin/bash") -> None:
+def create_linux_user(
+    user: str,
+    group: str,
+    shell: str = "/bin/bash",
+    sudoer: bool = False,
+    with_root_ssh_authorised_keys: bool = False,
+) -> None:
     with _step(
         f"Creating Linux user '{user}:{group}', with shell '{shell}'..."
     ) as step:
-        cmd = ["useradd", "-m", "-s", shell, "-g", group, user]
-        _run(cmd)
+        add_group_if_not_exists_cmd = ["groupadd", "-f", group]
+        _run(add_group_if_not_exists_cmd)
+
+        add_user_cmd = ["useradd", "-m", "-s", shell, "-g", group, user]
+        _run(add_user_cmd)
+
+        if sudoer:
+            with _step(f"Adding the user to the 'sudoers'...") as sudoer_step:
+                add_to_sudoers_cmd = ["usermod", "-aG" "sudo", user]
+                _run(add_to_sudoers_cmd)
+                sudoer_step.done("Added.")
+        if with_root_ssh_authorised_keys:
+            with _step(
+                f"Giving this user the same '~/.ssh/authorized_keys' than the root user..."
+            ) as ssh_authorised_keys_step:
+                target_file_dir = f"/home/{user}/.ssh"
+                copy_keys_cmd = f"mkdir -p '{target_file_dir}' && cp '/root/.ssh/authorized_keys' '{target_file_dir}/' && chown -R '{user}:{group}' '{target_file_dir}'"
+                _run(copy_keys_cmd, shell=True)
+                ssh_authorised_keys_step.done(
+                    "'Authorised keys' copied from root user."
+                )
+
         step.done("Created.")
 
 
@@ -686,7 +723,12 @@ def create_blank_django_app(app_dir: str, app_project_name: str) -> None:
         ]
         _run(create_project_cmd)
 
-        chown_cmd = ["chown", "-R", f"{LINUX_USER}:{LINUX_GROUP}", app_dir]
+        chown_cmd = [
+            "chown",
+            "-R",
+            f"{LINUX_USER_DJANGO_USERNAME}:{LINUX_USER_DJANGO_GROUPNAME}",
+            app_dir,
+        ]
         _run(chown_cmd)
 
         with _step(
@@ -883,8 +925,8 @@ Requires=gunicorn.socket
 After=network.target
 
 [Service]
-User={LINUX_USER}
-Group={LINUX_GROUP}
+User={LINUX_USER_DJANGO_USERNAME}
+Group={LINUX_USER_DJANGO_GROUPNAME}
 WorkingDirectory={DJANGO_APP_DIR}
 ExecStart=/usr/bin/python{TARGET_PYTHON_VERSION} /usr/local/bin/gunicorn \\
           --access-logfile - \\
