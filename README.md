@@ -52,8 +52,8 @@ root@droplet:~ python3.6 django_setup.py
 
 Here are a few environment variables you can set prior to running this script, if you want to customise some things:
 
-- `POSTGRES_DB` _(default: "django_app")_
-- `POSTGRES_USER` _(default: "django_app")_
+- `POSTGRES_DB` _(default: "django_db")_
+- `POSTGRES_USER` _(default: "django_user")_
 - `POSTGRES_PASSWORD` _(default: a new one will be generated, and displayed once during the setup)_
 - `NGINX_SERVER_NAME` _(default: no `server_name` directive in the Nginx site config)_
 - `LINUX_USER_DJANGO_USERNAME` _(default: "django")_ the Linux username for the django app (it will have a home directory and the Systemd service will belong to that user)

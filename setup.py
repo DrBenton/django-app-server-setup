@@ -1,6 +1,6 @@
 #!/usr/bin/python3.6
 
-# pylint: disable=missing-docstring,invalid-name,line-too-long,bad-continuation
+# pylint: disable=missing-docstring,invalid-name,line-too-long,bad-continuation,too-many-lines
 
 from contextlib import contextmanager
 import enum
@@ -13,8 +13,8 @@ import sys
 import typing as t
 
 # Dynamic params, which can be set from env vars:
-POSTGRES_DB = os.getenv("POSTGRES_DB", "django_app")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "django_app")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "django_db")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "django_user")
 # (don't worry, we will generate a secure password on the fly if needed :-)
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
 NGINX_SERVER_NAME = os.getenv("NGINX_SERVER_NAME", "")
@@ -53,12 +53,13 @@ def setup_server() -> None:
     ensure_nodejs()
     ensure_postgres()
     ensure_nginx()
+    ensure_passenger()
 
     ensure_postgres_django_setup()
     ensure_python_app_packages_setup()
 
     ensure_django_app()
-    ensure_gunicorn_and_nginx_services_setup()
+    ensure_nginx_and_passenger_setup()
 
 
 def flight_precheck() -> None:
@@ -104,6 +105,7 @@ def ensure_linux_users_setup() -> None:
             )
         if not has_linux_user(LINUX_USER_DJANGO_USERNAME):
             create_linux_user(LINUX_USER_DJANGO_USERNAME, LINUX_USER_DJANGO_GROUPNAME)
+
 
 def ensure_base_software() -> None:
     with _ensuring_step("Curl"):
@@ -180,6 +182,24 @@ def ensure_nginx() -> None:
         firewall_rule_allow_if_needed("Nginx Full")
 
 
+def ensure_passenger() -> None:
+    with _ensuring_step("Phusion Passenger"):
+        # @link https://www.phusionpassenger.com/library/walkthroughs/deploy/python/ownserver/nginx/oss/bionic/install_passenger.html
+        add_apt_repository_if_needed(
+            "keyserver.ubuntu.com:80",
+            "561F9B9CAC40B2F7",
+            "deb https://oss-binaries.phusionpassenger.com/apt/passenger bionic main",
+            "passenger",
+            "Phusion Automated Software Signing",
+        )
+        install_debian_package_if_needed("libnginx-mod-http-passenger")
+        _check_cmd_output_or_die(
+            "/usr/bin/passenger-config validate-install --auto | tail -n 1",
+            r"Everything looks good",
+            shell=True,
+        )
+
+
 def ensure_postgres_django_setup() -> None:
     with _ensuring_step("Posgres config for the Django app"):
         postgres_django_setup_ensure_db(POSTGRES_DB)
@@ -188,10 +208,8 @@ def ensure_postgres_django_setup() -> None:
 
 def ensure_python_app_packages_setup() -> None:
     with _ensuring_step("Python packages for our app"):
-        install_python_package_if_needed("gunicorn")
         install_python_package_if_needed("psycopg2-binary")
         install_python_package_if_needed("pipenv")
-
 
 
 def ensure_django_app() -> None:
@@ -199,25 +217,22 @@ def ensure_django_app() -> None:
         create_blank_django_app_if_needed(DJANGO_APP_DIR, DJANGO_PROJECT_NAME)
 
 
-def ensure_gunicorn_and_nginx_services_setup() -> None:
-    with _ensuring_step("Gunicorn & Nginx services"):
-        create_file_if_needed(
-            "/etc/systemd/system/gunicorn.socket", _GUNICORN_SOCKET_FILE
-        )
-        create_file_if_needed(
-            "/etc/systemd/system/gunicorn.service", _GUNICORN_SERVICE_FILE
-        )
-        create_file_if_needed(
-            f"{_NGINX_AVAILABLE_SITES_PATH}/{_NGINX_SITE_NAME}", _NGINX_SITE_FILE
-        )
-        gunicorn_and_nginx_services_activate_nginx_site_if_needed(
-            available_sites_path=_NGINX_AVAILABLE_SITES_PATH,
-            enabled_sites_path=_NGINX_ENABLED_SITES_PATH,
-            site_name=_NGINX_SITE_NAME,
-            site_config=_NGINX_SITE_FILE,
-        )
-        systemd_enable_and_start_service("gunicorn")
-        systemd_enable_and_start_service("nginx")
+def ensure_nginx_and_passenger_setup() -> None:
+    with _ensuring_step("Nginx & Passenger setup"):
+        with _ensuring_step("Passenger setup"):
+            passenger_wsgi_path = f"{DJANGO_APP_DIR}/passenger_wsgi.py"
+            create_file_if_needed(passenger_wsgi_path, _PASSENGER_WSGI_FILE)
+        with _ensuring_step("Nginx setup"):
+            create_file_if_needed(
+                f"{_NGINX_AVAILABLE_SITES_PATH}/{_NGINX_SITE_NAME}", _NGINX_SITE_FILE
+            )
+            nginx_activate_nginx_site_if_needed(
+                available_sites_path=_NGINX_AVAILABLE_SITES_PATH,
+                enabled_sites_path=_NGINX_ENABLED_SITES_PATH,
+                site_name=_NGINX_SITE_NAME,
+                site_config=_NGINX_SITE_FILE,
+            )
+            systemd_enable_and_start_service("nginx")
 
 
 ##################
@@ -325,12 +340,48 @@ def is_ppa_installed(name: str) -> bool:
         return installed
 
 
+def is_apt_repository_installed(expected_repo_name: str) -> bool:
+    with _step(f"Checking APT repository '{expected_repo_name}'...") as step:
+        cmd = f"(APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1 apt-key list | grep '{expected_repo_name}') || true"
+        process_result = _run(cmd, shell=True)
+        installed = bool(process_result.stdout)
+        if installed:
+            step.nothing_to_do("APT repository already installed.")
+        else:
+            step.done("APT repository not installed.")
+        return installed
+
+
 def install_ppa(name: str) -> None:
     with _step(f"Adding PPA '{name}'...") as step:
         cmd = ["add-apt-repository", "-y", f"ppa:{name}/ppa"]
         _run(cmd, stdout=None)
         apt_update()
         step.done("PPA added.")
+
+
+def add_apt_repository(
+    keyserver: str,
+    key: str,
+    deb_definition: str,
+    repo_name: str,
+    expected_repo_name: str,
+) -> None:
+    with _step(f"Adding APT repository '{repo_name}'...") as step:
+        apt_key_cmd = [
+            "apt-key",
+            "adv",
+            "--keyserver",
+            f"hkp://{keyserver}",
+            "--recv-keys",
+            key,
+        ]
+        _run(apt_key_cmd, stdout=None)
+        create_file_if_needed(
+            f"/etc/apt/sources.list.d/{repo_name.lower()}.list", deb_definition
+        )
+        apt_update()
+        step.done("APT repository added.")
 
 
 def is_root() -> bool:
@@ -348,6 +399,20 @@ def install_ppa_if_needed(name: str) -> bool:
     if installed:
         return False
     install_ppa(name)
+    return True
+
+
+def add_apt_repository_if_needed(
+    keyserver: str,
+    key: str,
+    deb_definition: str,
+    repo_label: str,
+    expected_repo_name: str,
+) -> bool:
+    installed = is_apt_repository_installed(expected_repo_name)
+    if installed:
+        return False
+    add_apt_repository(keyserver, key, deb_definition, repo_label, expected_repo_name)
     return True
 
 
@@ -676,7 +741,7 @@ commit;
         step.done("User created.")
 
 
-def gunicorn_and_nginx_services_activate_nginx_site_if_needed(
+def nginx_activate_nginx_site_if_needed(
     available_sites_path: str, enabled_sites_path: str, site_name: str, site_config: str
 ) -> None:
     nginx_disable_site_if_needed("default")
@@ -902,43 +967,6 @@ def _step(step_init_caption: str) -> t.Generator[StepReporter, None, None]:
     yield StepReporter()
 
 
-_GUNICORN_SOCKET_FILE = """\
-# /etc/systemd/system/gunicorn.socket
-
-[Unit]
-Description=gunicorn socket
-
-[Socket]
-ListenStream=/run/gunicorn.sock
-
-[Install]
-WantedBy=sockets.target
-
-"""
-
-_GUNICORN_SERVICE_FILE = f"""\
-# /etc/systemd/system/gunicorn.service
-
-[Unit]
-Description=gunicorn daemon
-Requires=gunicorn.socket
-After=network.target
-
-[Service]
-User={LINUX_USER_DJANGO_USERNAME}
-Group={LINUX_USER_DJANGO_GROUPNAME}
-WorkingDirectory={DJANGO_APP_DIR}
-ExecStart=/usr/bin/python{TARGET_PYTHON_VERSION} /usr/local/bin/gunicorn \\
-          --access-logfile - \\
-          --workers 3 \\
-          --bind unix:/run/gunicorn.sock \\
-          {DJANGO_PROJECT_NAME}.wsgi:application
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-
 _NGINX_AVAILABLE_SITES_PATH = "/etc/nginx/sites-available"
 _NGINX_ENABLED_SITES_PATH = "/etc/nginx/sites-enabled"
 _NGINX_SITE_NAME = "django-app"
@@ -950,16 +978,23 @@ server {{
     listen 80;
 
     location = /favicon.ico {{ access_log off; log_not_found off; }}
-    location /static/ {{
-        root {DJANGO_APP_DIR};
-    }}
 
     location / {{
-        include proxy_params;
-        proxy_pass http://unix:/run/gunicorn.sock;
+        passenger_enabled on;
+        passenger_app_type wsgi;
+        # passenger_startup_file passenger_wsgi.py;
+        
+        passenger_python /usr/bin/python{TARGET_PYTHON_VERSION};
+        root {DJANGO_APP_DIR}/static;
     }}
 }}
 
+"""
+
+_PASSENGER_WSGI_FILE = f"""\
+import {DJANGO_PROJECT_NAME}.wsgi
+
+application = {DJANGO_PROJECT_NAME}.wsgi.application
 """
 
 if __name__ == "__main__":
